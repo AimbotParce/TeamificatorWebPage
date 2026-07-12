@@ -4,4 +4,4 @@
 #
 # Seeded with :latest for the first deploy; after the first build the deploy
 # workflow opens a PR bumping this to the immutable sha-<commit> tag.
-image: ghcr.io/aimbotparce/teamificator-web:sha-75442507edac
+image: ghcr.io/aimbotparce/teamificator-web:sha-63f2f4adbfa9
