@@ -1,0 +1,45 @@
+# Runs on the in-cluster teamificator-web-runner (ci-deploy ServiceAccount).
+# Terraform runs directly in the runner container, so the kubernetes provider +
+# backend authenticate via in-cluster config -- no credentials or kubeconfig
+# needed.
+
+name: Terraform Apply
+
+on:
+  push:
+    branches: [main]
+    # Scoped to things that change the deployment. The image build in
+    # deploy.yml pushes :latest separately; bump image-versions.yaml to roll a
+    # new version through here.
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform-apply.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-teamificator-web-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: teamificator-web-runner
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve
