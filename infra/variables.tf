@@ -28,5 +28,5 @@ variable "public_hosts" {
 variable "replicas" {
   description = "Number of app replicas."
   type        = number
-  default     = 2
+  default     = 1
 }
