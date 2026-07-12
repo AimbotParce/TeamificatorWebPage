@@ -64,7 +64,7 @@ COPY package.json .
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY --from=build /usr/src/app/.next ./.next
 COPY --from=build /usr/src/app/public ./public
-COPY --from=build /usr/src/app/next.config.ts ./next.config.ts
+COPY --from=build /usr/src/app/next.config.mjs ./next.config.mjs
 
 
 # Expose the port that the application listens on.
