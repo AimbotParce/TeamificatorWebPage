@@ -15,7 +15,7 @@
     "@mui/material": "^6.4.4",
     "@nextui-org/dropdown": "^2.3.9",
     "framer-motion": "^12.4.3",
-    "next": "15.1.7",
+    "next": "15.5.18",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
