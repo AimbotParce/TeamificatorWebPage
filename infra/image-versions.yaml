@@ -1,0 +1,7 @@
+# Container image to deploy. The build workflow (.github/workflows/deploy.yml)
+# pushes this on every merge to main. Pin a specific tag or @sha256 digest here
+# for reproducible, roll-forward-only deploys instead of the mutable :latest.
+#
+# Seeded with :latest for the first deploy; after the first build the deploy
+# workflow opens a PR bumping this to the immutable sha-<commit> tag.
+image: ghcr.io/aimbotparce/teamificator-web:latest

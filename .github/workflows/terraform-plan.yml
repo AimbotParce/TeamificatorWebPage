@@ -1,0 +1,115 @@
+# Runs on the in-cluster teamificator-web-runner (a pod running as the ci-deploy
+# ServiceAccount). Terraform runs directly in the runner container, so the
+# kubernetes provider + backend use in-cluster config -- no credentials needed.
+# The plan is posted as a PR comment; the previous plan comment is minimized
+# (hidden) first so a stale plan can't be mistaken for the current one.
+
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-teamificator-web-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: teamificator-web-runner
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Comment plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- terraform-plan:teamificator-web -->';
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const sha = context.payload.pull_request.head.sha;
+            const ok = '${{ steps.plan.outputs.exitcode }}' === '0';
+
+            let plan = '';
+            try { plan = fs.readFileSync('infra/plan.txt', 'utf8'); }
+            catch (e) { plan = `Could not read plan output: ${e}`; }
+
+            // Keep under GitHub's ~65k comment limit; the tail holds the summary.
+            const MAX = 60000;
+            let truncated = false;
+            if (plan.length > MAX) { plan = plan.slice(-MAX); truncated = true; }
+
+            // Fence longer than any backtick run in the plan, so plan content
+            // can't prematurely close the code block.
+            const longestTicks = (plan.match(/`+/g) || []).reduce((m, s) => Math.max(m, s.length), 0);
+            const fence = '`'.repeat(Math.max(3, longestTicks + 1));
+
+            // Build with a template literal: the blank lines after </summary> and
+            // around the fence are REQUIRED for GitHub to render a code block
+            // inside <details> (do not strip them).
+            const truncNote = truncated
+              ? `> ⚠️ Output truncated to the last ${MAX} chars — full log in the [workflow run](${runUrl}).\n\n`
+              : '';
+            const body =
+              `${marker}\n\n` +
+              `### Terraform Plan — \`infra\` ${ok ? '✅' : '❌ failed'}\n\n` +
+              truncNote +
+              `<details><summary>Show plan</summary>\n\n` +
+              `${fence}terraform\n` +
+              `${plan}\n` +
+              `${fence}\n\n` +
+              `</details>\n\n` +
+              `_Commit \`${sha}\` · [workflow run](${runUrl})_`;
+
+            // 1) Hide previous plan comments (mark OUTDATED) before posting the new one.
+            const q = `query($owner:String!,$repo:String!,$pr:Int!){
+              repository(owner:$owner, name:$repo){
+                pullRequest(number:$pr){
+                  comments(first:100){ nodes { id body isMinimized } }
+                }
+              }
+            }`;
+            const res = await github.graphql(q, { owner, repo, pr: prNumber });
+            for (const c of res.repository.pullRequest.comments.nodes) {
+              if (c.body.includes(marker) && !c.isMinimized) {
+                await github.graphql(
+                  `mutation($id:ID!){ minimizeComment(input:{subjectId:$id, classifier:OUTDATED}){ minimizedComment{ isMinimized } } }`,
+                  { id: c.id }
+                );
+              }
+            }
+
+            // 2) Post the fresh plan.
+            await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+
+      - name: Fail if plan errored
+        if: steps.plan.outputs.exitcode != '0'
+        run: exit 1

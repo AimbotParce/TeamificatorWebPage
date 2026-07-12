@@ -1,0 +1,86 @@
+name: Build on Push
+run-name: Build Docker Image on Push
+
+on:
+  push:
+    branches:
+      - main
+    # App-code changes only. Infra, CI config and docs don't rebuild the image
+    # (and this keeps the auto image-bump PR from re-triggering a build).
+    paths-ignore:
+      - "infra/**"
+      - ".github/**"
+      - "docs/**"
+      - "*.md"
+  # Allow seeding the first image (or a manual rebuild) without an app change.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image ref
+        id: img
+        run: |
+          # GHCR repository names must be lowercase.
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=${REGISTRY}/${OWNER}/teamificator-web" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}
+            ${{ steps.img.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update image-versions.yaml
+        run: |
+          yq -i ".image = \"${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}\"" infra/image-versions.yaml
+
+      # Opens a PR bumping the pinned image so the terraform-plan / -apply
+      # workflows take over the actual deploy.
+      #
+      # NOTE: this uses the default GITHUB_TOKEN. PRs opened by GITHUB_TOKEN do
+      # NOT trigger other workflows, so terraform-plan will not run on this PR
+      # automatically. To get the plan to run on the bump PR, pass a PAT (or a
+      # GitHub App token) with `token: ${{ secrets.DEPLOY_PAT }}` below. Merging
+      # the PR still triggers terraform-apply either way (the merge is a normal
+      # push to main).
+      - name: Create PR with updated image tag
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: update image to ${{ steps.img.outputs.tag }}"
+          branch: deploy/image-${{ steps.img.outputs.tag }}
+          title: "Deploy: update image to ${{ steps.img.outputs.tag }}"
+          body: |
+            Automated PR bumping the deployed image to
+            `${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}`
+            after a successful build of ${{ github.sha }}.
+
+            Merging this runs `terraform apply` on the teamificator-web runner.
